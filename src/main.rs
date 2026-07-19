@@ -4,8 +4,8 @@ use futures_util::StreamExt;
 use lofty::{file::AudioFile, probe::Probe};
 use ratatui::DefaultTerminal;
 use ratatui::widgets::Paragraph;
-use rodio::{Decoder, Player, Source};
-use std::{fs::File, io::BufReader, time::Duration};
+use rodio::{Decoder, Player};
+use std::{fs::File, time::Duration};
 use tokio::{
     sync::mpsc::{self, Receiver, Sender},
     time::Instant,
@@ -36,6 +36,13 @@ impl AppState {
             current_track: String::new(),
         }
     }
+}
+
+fn format_duration(d: Duration) -> (u64, u64) {
+    let seconds = d.as_secs();
+    let off_seconds = seconds % 60;
+    let minutes = seconds / 60;
+    (minutes, off_seconds)
 }
 
 #[tokio::main]
@@ -88,7 +95,7 @@ async fn main() {
                 break;
             }
             if last_update_send.elapsed() >= Duration::from_millis(200) {
-                tx.try_send((player.get_pos(), total));
+                tx.try_send((player.get_pos(), total)).unwrap();
                 last_update_send = Instant::now();
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -121,10 +128,14 @@ async fn run(
                         State::Playing => "Playing".to_string(),
                         State::Paused => "Paused".to_string(),
                     };
-                    text = text + format!(" {:?}/{:?}", current_secs, total_secs).as_str();
+                    let (minutes, off_secs) = format_duration(current_secs);
+                    let (total_mins, total_secs) = format_duration(total_secs);
+
+                    text = text + format!(" {:02}:{:02}/{:02}:{:02}", minutes, off_secs, total_mins, total_secs).as_str();
+
                     let display = Paragraph::new(text);
                     f.render_widget(display, f.area());
-                });
+                }).unwrap();
             }
             Some((current, total)) = ui_rx.recv() => {
                 (current_secs, total_secs) = (current, total);
