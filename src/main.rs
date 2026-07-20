@@ -4,12 +4,21 @@ use futures_util::StreamExt;
 use lofty::{file::AudioFile, probe::Probe};
 use ratatui::DefaultTerminal;
 use ratatui::widgets::Paragraph;
-use rodio::{Decoder, Player};
+use rodio::{Decoder, Player, play};
 use std::{fs::File, time::Duration};
 use tokio::{
     sync::mpsc::{self, Receiver, Sender},
     time::Instant,
 };
+
+struct Song {
+    path: String,
+}
+struct UiUpdate {
+    current: Duration,
+    total: Duration,
+    skip: bool,
+}
 
 enum PlayerCmd {
     PlayTrack(String),
@@ -26,14 +35,23 @@ enum State {
 
 struct AppState {
     state: State,
-    current_track: String,
+    playlist: Vec<Song>,
+    current_track: i32,
 }
 
 impl AppState {
     fn new() -> Self {
         Self {
             state: State::NotPlaying,
-            current_track: String::new(),
+            current_track: 0,
+            playlist: vec![
+                Song {
+                    path: "test.mp3".to_string(),
+                },
+                Song {
+                    path: "test2.mp3".to_string(),
+                },
+            ],
         }
     }
 }
@@ -48,7 +66,7 @@ fn format_duration(d: Duration) -> (u64, u64) {
 #[tokio::main]
 async fn main() {
     let (cmd_tx, cmd_rx) = mpsc::channel::<PlayerCmd>(32);
-    let (ui_tx, ui_rx) = mpsc::channel::<(Duration, Duration)>(32);
+    let (ui_tx, ui_rx) = mpsc::channel::<UiUpdate>(32);
     tokio::task::spawn_blocking(move || {
         let mut stream = rodio::stream::DeviceSinkBuilder::open_default_sink()
             .expect("couldnt open default audio");
@@ -61,6 +79,8 @@ async fn main() {
         let mut total = Duration::from_secs(0);
 
         let mut last_update_send = Instant::now();
+
+        let mut skip = false;
 
         loop {
             while let Ok(cmd) = rx.try_recv() {
@@ -94,8 +114,20 @@ async fn main() {
                 player.stop();
                 break;
             }
+            if total != Duration::from_secs(0)
+                && player.get_pos() >= total - Duration::from_millis(150)
+            {
+                skip = true;
+            }
             if last_update_send.elapsed() >= Duration::from_millis(200) {
-                tx.try_send((player.get_pos(), total)).unwrap();
+                let skip_dupe = skip;
+                skip = false;
+                tx.try_send(UiUpdate {
+                    current: player.get_pos(),
+                    total: total,
+                    skip: skip_dupe,
+                })
+                .unwrap();
                 last_update_send = Instant::now();
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -110,7 +142,7 @@ async fn main() {
 async fn run(
     terminal: &mut DefaultTerminal,
     cmd_tx: Sender<PlayerCmd>,
-    mut ui_rx: Receiver<(Duration, Duration)>,
+    mut ui_rx: Receiver<UiUpdate>,
     app: &mut AppState,
 ) -> std::io::Result<()> {
     let mut reader = EventStream::new();
@@ -133,12 +165,21 @@ async fn run(
 
                     text = text + format!(" {:02}:{:02}/{:02}:{:02}", minutes, off_secs, total_mins, total_secs).as_str();
 
-                    let display = Paragraph::new(text);
+                    let display = Paragraph::new(text).centered();
                     f.render_widget(display, f.area());
                 }).unwrap();
             }
-            Some((current, total)) = ui_rx.recv() => {
-                (current_secs, total_secs) = (current, total);
+            Some(update) = ui_rx.recv() => {
+                (current_secs, total_secs) = (update.current, update.total);
+                if update.skip {
+                    if (app.current_track + 1) < app.playlist.len() as i32 {
+                        app.current_track += 1;
+                        let x = app.current_track;
+                        let _ = cmd_tx.send(PlayerCmd::PlayTrack(app.playlist[x as usize].path.clone())).await;
+                    } else {
+                        app.state = State::NotPlaying;
+                    }
+                }
             }
             maybe_event = reader.next() => {
                 if let Some(Ok(Event::Key(key))) = maybe_event {
@@ -150,8 +191,8 @@ async fn run(
                             match app.state {
                                 State::NotPlaying => {
                                     app.state = State::Playing;
-                                    app.current_track = String::from("test.mp3");
-                                    let _ = cmd_tx.send(PlayerCmd::PlayTrack(app.current_track.clone())).await;
+                                    let x = app.current_track;
+                                    let _ = cmd_tx.send(PlayerCmd::PlayTrack(app.playlist[x as usize].path.clone())).await;
                                 }
                                 State::Playing => {
                                     app.state = State::Paused;
