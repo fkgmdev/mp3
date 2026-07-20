@@ -15,7 +15,7 @@ pub async fn get_songs() -> Vec<Song> {
     for line in songs.lines() {
         let mut artist = String::new();
         let mut title = String::new();
-        let path = line.trim().clone().to_string();
+        let path = line.trim().to_string();
         if let Ok(file) = File::open(&line).await {
             if let Ok(tagged) = Probe::open(line).unwrap().read() {
                 let props = tagged.primary_tag().unwrap();

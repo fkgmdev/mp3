@@ -8,6 +8,7 @@ use lofty::{
 use ratatui::{
     DefaultTerminal,
     layout::{Direction, Layout},
+    widgets::{Block, Gauge, LineGauge},
 };
 use ratatui::{layout::Constraint, widgets::Paragraph};
 use rodio::{Decoder, Player, play};
@@ -36,6 +37,7 @@ enum PlayerCmd {
     Jump(i64),
 }
 
+#[derive(PartialEq)]
 enum State {
     NotPlaying,
     Playing,
@@ -239,26 +241,42 @@ fn handle_ui(
         .draw(|f| {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints(vec![Constraint::Percentage(80), Constraint::Percentage(20)])
+                .constraints(vec![Constraint::Percentage(93), Constraint::Percentage(7)])
                 .split(f.area());
+            let x = app.current_track;
+            let current_song = &app.playlist[x as usize];
 
-            let mut text = match app.state {
-                State::NotPlaying => "Idle".to_string(),
-                State::Playing => "Playing".to_string(),
-                State::Paused => "Paused".to_string(),
-            };
+            // let mut text = match app.state {
+            //     State::NotPlaying => "Idle".to_string(),
+            //     State::Playing => "Playing".to_string(),
+            //     State::Paused => "Paused".to_string(),
+            // };
+            let text = format!("Playing {} by {}", current_song.title, current_song.artist);
+
             let (minutes, off_secs) = format_duration(current_secs);
-            let (total_mins, total_secs) = format_duration(total_secs);
+            let (total_mins, total_off_secs) = format_duration(total_secs);
 
-            text = text
-                + format!(
-                    " {:02}:{:02}/{:02}:{:02}",
-                    minutes, off_secs, total_mins, total_secs
-                )
-                .as_str();
+            // text = text
+            //     + format!(
+            //         " {:02}:{:02}/{:02}:{:02}",
+            //         minutes, off_secs, total_mins, total_off_secs
+            //     )
+            //     .as_str();
 
             let display = Paragraph::new(text).centered();
             f.render_widget(display, chunks[0]);
+            let bar = Gauge::default()
+                .block(Block::bordered())
+                .ratio(if total_secs.as_secs() > 0 {
+                    (current_secs.as_secs_f64() / total_secs.as_secs_f64()).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                })
+                .label(format!(
+                    "{:02}:{:02}/{:02}:{:02}",
+                    minutes, off_secs, total_mins, total_off_secs
+                ));
+            f.render_widget(bar, chunks[1]);
         })
         .unwrap();
 }
