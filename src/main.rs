@@ -8,7 +8,8 @@ use lofty::{
 use ratatui::{
     DefaultTerminal,
     layout::{Direction, Layout},
-    widgets::{Block, Gauge, LineGauge},
+    style::{Color, Style},
+    widgets::{Block, Gauge, LineGauge, List, ListItem, ListState},
 };
 use ratatui::{layout::Constraint, widgets::Paragraph};
 use rodio::{Decoder, Player, play};
@@ -19,11 +20,6 @@ use tokio::{
 };
 mod playlist;
 
-// struct Song {
-//     path: String,
-//     title: String,
-//     artist: String,
-// }
 struct UiUpdate {
     current: Duration,
     total: Duration,
@@ -160,25 +156,6 @@ async fn run(
     loop {
         tokio::select! {
             _ = ui_ticker.tick() => {
-                // terminal.draw(|f| {
-                //     let chunks = Layout::default()
-                //         .direction(Direction::Vertical)
-                //         .constraints(vec![Constraint::Percentage(80), Constraint::Percentage(20)])
-                //         .split(f.area());
-                //
-                //     let mut text = match app.state {
-                //         State::NotPlaying => "Idle".to_string(),
-                //         State::Playing => "Playing".to_string(),
-                //         State::Paused => "Paused".to_string(),
-                //     };
-                //     let (minutes, off_secs) = format_duration(current_secs);
-                //     let (total_mins, total_secs) = format_duration(total_secs);
-                //
-                //     text = text + format!(" {:02}:{:02}/{:02}:{:02}", minutes, off_secs, total_mins, total_secs).as_str();
-                //
-                //     let display = Paragraph::new(text).centered();
-                //     f.render_widget(display, chunks[0]);
-                // }).unwrap();
                 handle_ui(terminal, app, current_secs, total_secs);
             }
             Some(update) = ui_rx.recv() => {
@@ -243,28 +220,37 @@ fn handle_ui(
                 .direction(Direction::Vertical)
                 .constraints(vec![Constraint::Percentage(93), Constraint::Percentage(7)])
                 .split(f.area());
+            let horizontal_split = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints(vec![Constraint::Percentage(30), Constraint::Percentage(70)])
+                .split(chunks[0]);
             let x = app.current_track;
             let current_song = &app.playlist[x as usize];
 
-            // let mut text = match app.state {
-            //     State::NotPlaying => "Idle".to_string(),
-            //     State::Playing => "Playing".to_string(),
-            //     State::Paused => "Paused".to_string(),
-            // };
             let text = format!("Playing {} by {}", current_song.title, current_song.artist);
 
             let (minutes, off_secs) = format_duration(current_secs);
             let (total_mins, total_off_secs) = format_duration(total_secs);
 
-            // text = text
-            //     + format!(
-            //         " {:02}:{:02}/{:02}:{:02}",
-            //         minutes, off_secs, total_mins, total_off_secs
-            //     )
-            //     .as_str();
+            // List
+            let mut list_state =
+                ListState::default().with_selected(Some(app.current_track as usize));
+            let items: Vec<ListItem> = app
+                .playlist
+                .iter()
+                .enumerate()
+                .map(|(index, song)| {
+                    ListItem::new(format!("{}: {} - {}", index, song.title, song.artist))
+                })
+                .collect();
+            let list = List::new(items)
+                .block(Block::bordered().title("Queue"))
+                .style(Style::default().fg(Color::White).bg(Color::Black))
+                .highlight_style(Style::default().fg(Color::Black).bg(Color::White));
+            f.render_stateful_widget(list, horizontal_split[0], &mut list_state);
 
             let display = Paragraph::new(text).centered();
-            f.render_widget(display, chunks[0]);
+            f.render_widget(display, horizontal_split[1]);
             let bar = Gauge::default()
                 .block(Block::bordered())
                 .ratio(if total_secs.as_secs() > 0 {
