@@ -1,19 +1,28 @@
-#![allow(unused, clippy::all)]
+#![allow(unused, clippy::all, rust_analyzer::unresolved_method)]
 use crossterm::event::{Event, EventStream, KeyCode};
 use futures_util::StreamExt;
-use lofty::{file::AudioFile, probe::Probe};
-use ratatui::DefaultTerminal;
-use ratatui::widgets::Paragraph;
+use lofty::{
+    file::{AudioFile, TaggedFileExt},
+    probe::Probe,
+};
+use ratatui::{
+    DefaultTerminal,
+    layout::{Direction, Layout},
+};
+use ratatui::{layout::Constraint, widgets::Paragraph};
 use rodio::{Decoder, Player, play};
 use std::{fs::File, time::Duration};
 use tokio::{
     sync::mpsc::{self, Receiver, Sender},
     time::Instant,
 };
+mod playlist;
 
-struct Song {
-    path: String,
-}
+// struct Song {
+//     path: String,
+//     title: String,
+//     artist: String,
+// }
 struct UiUpdate {
     current: Duration,
     total: Duration,
@@ -35,23 +44,16 @@ enum State {
 
 struct AppState {
     state: State,
-    playlist: Vec<Song>,
+    playlist: Vec<playlist::Song>,
     current_track: i32,
 }
 
 impl AppState {
-    fn new() -> Self {
+    async fn new() -> Self {
         Self {
             state: State::NotPlaying,
             current_track: 0,
-            playlist: vec![
-                Song {
-                    path: "test.mp3".to_string(),
-                },
-                Song {
-                    path: "test2.mp3".to_string(),
-                },
-            ],
+            playlist: playlist::get_songs().await,
         }
     }
 }
@@ -133,7 +135,7 @@ async fn main() {
             std::thread::sleep(Duration::from_millis(10));
         }
     });
-    let mut app = AppState::new();
+    let mut app = AppState::new().await;
     let mut terminal = ratatui::init();
     let _ = run(&mut terminal, cmd_tx, ui_rx, &mut app).await;
     ratatui::restore();
@@ -151,23 +153,31 @@ async fn run(
     let mut current_secs = Duration::from_secs(0);
     let mut total_secs = Duration::from_secs(0);
 
+    let reader_next = reader.next();
+
     loop {
         tokio::select! {
             _ = ui_ticker.tick() => {
-                terminal.draw(|f| {
-                    let mut text = match app.state {
-                        State::NotPlaying => "Idle".to_string(),
-                        State::Playing => "Playing".to_string(),
-                        State::Paused => "Paused".to_string(),
-                    };
-                    let (minutes, off_secs) = format_duration(current_secs);
-                    let (total_mins, total_secs) = format_duration(total_secs);
-
-                    text = text + format!(" {:02}:{:02}/{:02}:{:02}", minutes, off_secs, total_mins, total_secs).as_str();
-
-                    let display = Paragraph::new(text).centered();
-                    f.render_widget(display, f.area());
-                }).unwrap();
+                // terminal.draw(|f| {
+                //     let chunks = Layout::default()
+                //         .direction(Direction::Vertical)
+                //         .constraints(vec![Constraint::Percentage(80), Constraint::Percentage(20)])
+                //         .split(f.area());
+                //
+                //     let mut text = match app.state {
+                //         State::NotPlaying => "Idle".to_string(),
+                //         State::Playing => "Playing".to_string(),
+                //         State::Paused => "Paused".to_string(),
+                //     };
+                //     let (minutes, off_secs) = format_duration(current_secs);
+                //     let (total_mins, total_secs) = format_duration(total_secs);
+                //
+                //     text = text + format!(" {:02}:{:02}/{:02}:{:02}", minutes, off_secs, total_mins, total_secs).as_str();
+                //
+                //     let display = Paragraph::new(text).centered();
+                //     f.render_widget(display, chunks[0]);
+                // }).unwrap();
+                handle_ui(terminal, app, current_secs, total_secs);
             }
             Some(update) = ui_rx.recv() => {
                 (current_secs, total_secs) = (update.current, update.total);
@@ -217,4 +227,38 @@ async fn run(
             }
         }
     }
+}
+
+fn handle_ui(
+    terminal: &mut DefaultTerminal,
+    app: &mut AppState,
+    current_secs: Duration,
+    total_secs: Duration,
+) {
+    terminal
+        .draw(|f| {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints(vec![Constraint::Percentage(80), Constraint::Percentage(20)])
+                .split(f.area());
+
+            let mut text = match app.state {
+                State::NotPlaying => "Idle".to_string(),
+                State::Playing => "Playing".to_string(),
+                State::Paused => "Paused".to_string(),
+            };
+            let (minutes, off_secs) = format_duration(current_secs);
+            let (total_mins, total_secs) = format_duration(total_secs);
+
+            text = text
+                + format!(
+                    " {:02}:{:02}/{:02}:{:02}",
+                    minutes, off_secs, total_mins, total_secs
+                )
+                .as_str();
+
+            let display = Paragraph::new(text).centered();
+            f.render_widget(display, chunks[0]);
+        })
+        .unwrap();
 }
