@@ -178,7 +178,7 @@ async fn run(
             }
             maybe_event = reader.next() => {
                 if let Some(Ok(Event::Key(key))) = maybe_event {
-                    if handle_key(key, app, cmd_tx.clone()).await {
+                    if handle_key(key, app, cmd_tx.clone(), current_secs).await {
                         return Ok(())
                     }
                 }
@@ -246,7 +246,12 @@ fn handle_ui(
         .unwrap();
 }
 
-async fn handle_key(key: KeyEvent, app: &mut AppState, cmd_tx: Sender<PlayerCmd>) -> bool {
+async fn handle_key(
+    key: KeyEvent,
+    app: &mut AppState,
+    cmd_tx: Sender<PlayerCmd>,
+    current_secs: Duration,
+) -> bool {
     match key.code {
         KeyCode::Char('q') => return true,
         KeyCode::Char(' ') => match app.state {
@@ -274,24 +279,44 @@ async fn handle_key(key: KeyEvent, app: &mut AppState, cmd_tx: Sender<PlayerCmd>
         }
         KeyCode::Char('j') => {
             let x = app.current_track;
-            if x > 0 {
+            if current_secs > Duration::from_secs(3) {
+                let _ = cmd_tx
+                    .send(PlayerCmd::PlayTrack(app.playlist[x as usize].path.clone()))
+                    .await;
+            } else if x > 0 {
+                let flag = if app.state == State::NotPlaying || app.state == State::Paused {
+                    true
+                } else {
+                    false
+                };
                 app.current_track -= 1;
                 let _ = cmd_tx
                     .send(PlayerCmd::PlayTrack(
                         app.playlist[(x - 1) as usize].path.clone(),
                     ))
                     .await;
+                if flag {
+                    let _ = cmd_tx.send(PlayerCmd::Pause).await;
+                }
             }
         }
         KeyCode::Char('k') => {
             let x = app.current_track;
             if x < app.playlist.len().try_into().unwrap() {
+                let flag = if app.state == State::NotPlaying || app.state == State::Paused {
+                    true
+                } else {
+                    false
+                };
                 app.current_track += 1;
                 let _ = cmd_tx
                     .send(PlayerCmd::PlayTrack(
                         app.playlist[(x + 1) as usize].path.clone(),
                     ))
                     .await;
+                if flag {
+                    let _ = cmd_tx.send(PlayerCmd::Pause).await;
+                }
             }
         }
 
