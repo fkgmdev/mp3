@@ -1,5 +1,12 @@
 #![allow(unused, clippy::all, rust_analyzer::unresolved_method)]
-use crossterm::event::{Event, EventStream, KeyCode};
+// Use termimage to render the image
+use crossterm::{
+    event::{
+        Event, EventStream, KeyCode, KeyEvent, KeyboardEnhancementFlags, MediaKeyCode,
+        PushKeyboardEnhancementFlags,
+    },
+    execute,
+};
 use futures_util::StreamExt;
 use lofty::{
     file::{AudioFile, TaggedFileExt},
@@ -7,13 +14,13 @@ use lofty::{
 };
 use ratatui::{
     DefaultTerminal,
-    layout::{Direction, Layout},
+    layout::{Direction, Layout, Size},
     style::{Color, Style},
     widgets::{Block, Gauge, LineGauge, List, ListItem, ListState},
 };
 use ratatui::{layout::Constraint, widgets::Paragraph};
 use rodio::{Decoder, Player, play};
-use std::{fs::File, time::Duration};
+use std::{fs::File, io::stdout, time::Duration};
 use tokio::{
     sync::mpsc::{self, Receiver, Sender},
     time::Instant,
@@ -152,7 +159,6 @@ async fn run(
     let mut total_secs = Duration::from_secs(0);
 
     let reader_next = reader.next();
-
     loop {
         tokio::select! {
             _ = ui_ticker.tick() => {
@@ -172,35 +178,8 @@ async fn run(
             }
             maybe_event = reader.next() => {
                 if let Some(Ok(Event::Key(key))) = maybe_event {
-                    match key.code {
-                        KeyCode::Char('q') => {
-                            return Ok(())
-                        }
-                        KeyCode::Char(' ') => {
-                            match app.state {
-                                State::NotPlaying => {
-                                    app.state = State::Playing;
-                                    let x = app.current_track;
-                                    let _ = cmd_tx.send(PlayerCmd::PlayTrack(app.playlist[x as usize].path.clone())).await;
-                                }
-                                State::Playing => {
-                                    app.state = State::Paused;
-                                    let _ = cmd_tx.send(PlayerCmd::Pause).await;
-                                }
-                                State::Paused => {
-                                    app.state = State::Playing;
-                                    let _ = cmd_tx.send(PlayerCmd::Resume).await;
-                                }
-                            }
-                        }
-                        KeyCode::Right => {
-                            let _ = cmd_tx.send(PlayerCmd::Jump(5)).await;
-                        }
-                        KeyCode::Left => {
-                            let _ = cmd_tx.send(PlayerCmd::Jump(-5)).await;
-                        }
-
-                        _ => {}
+                    if handle_key(key, app, cmd_tx.clone()).await {
+                        return Ok(())
                     }
                 }
             }
@@ -240,7 +219,7 @@ fn handle_ui(
                 .iter()
                 .enumerate()
                 .map(|(index, song)| {
-                    ListItem::new(format!("{}: {} - {}", index, song.title, song.artist))
+                    ListItem::new(format!("{}: {} - {}", index + 1, song.title, song.artist))
                 })
                 .collect();
             let list = List::new(items)
@@ -265,4 +244,58 @@ fn handle_ui(
             f.render_widget(bar, chunks[1]);
         })
         .unwrap();
+}
+
+async fn handle_key(key: KeyEvent, app: &mut AppState, cmd_tx: Sender<PlayerCmd>) -> bool {
+    match key.code {
+        KeyCode::Char('q') => return true,
+        KeyCode::Char(' ') => match app.state {
+            State::NotPlaying => {
+                app.state = State::Playing;
+                let x = app.current_track;
+                let _ = cmd_tx
+                    .send(PlayerCmd::PlayTrack(app.playlist[x as usize].path.clone()))
+                    .await;
+            }
+            State::Playing => {
+                app.state = State::Paused;
+                let _ = cmd_tx.send(PlayerCmd::Pause).await;
+            }
+            State::Paused => {
+                app.state = State::Playing;
+                let _ = cmd_tx.send(PlayerCmd::Resume).await;
+            }
+        },
+        KeyCode::Right => {
+            let _ = cmd_tx.send(PlayerCmd::Jump(5)).await;
+        }
+        KeyCode::Left => {
+            let _ = cmd_tx.send(PlayerCmd::Jump(-5)).await;
+        }
+        KeyCode::Char('j') => {
+            let x = app.current_track;
+            if x > 0 {
+                app.current_track -= 1;
+                let _ = cmd_tx
+                    .send(PlayerCmd::PlayTrack(
+                        app.playlist[(x - 1) as usize].path.clone(),
+                    ))
+                    .await;
+            }
+        }
+        KeyCode::Char('k') => {
+            let x = app.current_track;
+            if x < app.playlist.len().try_into().unwrap() {
+                app.current_track += 1;
+                let _ = cmd_tx
+                    .send(PlayerCmd::PlayTrack(
+                        app.playlist[(x + 1) as usize].path.clone(),
+                    ))
+                    .await;
+            }
+        }
+
+        _ => {}
+    }
+    false
 }
