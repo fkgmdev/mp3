@@ -41,6 +41,15 @@ enum PlayerCmd {
 }
 
 #[derive(PartialEq)]
+enum PlayerEvent {
+    Pause,
+    Play,
+    SkipForward,
+    SkipBackward,
+    HalfSkip,
+}
+
+#[derive(PartialEq)]
 enum State {
     NotPlaying,
     Playing,
@@ -51,6 +60,7 @@ struct AppState {
     state: State,
     playlist: Vec<playlist::Song>,
     current_track: i32,
+    last_event: PlayerEvent,
 }
 
 impl AppState {
@@ -59,6 +69,7 @@ impl AppState {
             state: State::NotPlaying,
             current_track: 0,
             playlist: playlist::get_songs().await,
+            last_event: PlayerEvent::Pause,
         }
     }
 }
@@ -171,8 +182,10 @@ async fn run(
                         app.current_track += 1;
                         let x = app.current_track;
                         let _ = cmd_tx.send(PlayerCmd::PlayTrack(app.playlist[x as usize].path.clone())).await;
+                        app.last_event = PlayerEvent::SkipForward;
                     } else {
                         app.state = State::NotPlaying;
+                        app.last_event = PlayerEvent::Pause;
                     }
                 }
             }
@@ -205,8 +218,13 @@ fn handle_ui(
                 .split(chunks[0]);
             let x = app.current_track;
             let current_song = &app.playlist[x as usize];
-
-            let text = format!("Playing {} by {}", current_song.title, current_song.artist);
+            let text = match app.last_event {
+                PlayerEvent::Pause => "paused".to_string(),
+                PlayerEvent::Play => "playing".to_string(),
+                PlayerEvent::SkipForward => "skipped forward".to_string(),
+                PlayerEvent::SkipBackward => "skipped backward".to_string(),
+                PlayerEvent::HalfSkip => "replaying song".to_string(),
+            };
 
             let (minutes, off_secs) = format_duration(current_secs);
             let (total_mins, total_off_secs) = format_duration(total_secs);
@@ -261,14 +279,17 @@ async fn handle_key(
                 let _ = cmd_tx
                     .send(PlayerCmd::PlayTrack(app.playlist[x as usize].path.clone()))
                     .await;
+                app.last_event = PlayerEvent::Play;
             }
             State::Playing => {
                 app.state = State::Paused;
                 let _ = cmd_tx.send(PlayerCmd::Pause).await;
+                app.last_event = PlayerEvent::Pause;
             }
             State::Paused => {
                 app.state = State::Playing;
                 let _ = cmd_tx.send(PlayerCmd::Resume).await;
+                app.last_event = PlayerEvent::Play;
             }
         },
         KeyCode::Right => {
@@ -283,6 +304,7 @@ async fn handle_key(
                 let _ = cmd_tx
                     .send(PlayerCmd::PlayTrack(app.playlist[x as usize].path.clone()))
                     .await;
+                app.last_event = PlayerEvent::HalfSkip;
             } else if x > 0 {
                 let flag = if app.state == State::NotPlaying || app.state == State::Paused {
                     true
@@ -295,14 +317,16 @@ async fn handle_key(
                         app.playlist[(x - 1) as usize].path.clone(),
                     ))
                     .await;
+                app.last_event = PlayerEvent::SkipBackward;
                 if flag {
                     let _ = cmd_tx.send(PlayerCmd::Pause).await;
+                } else {
                 }
             }
         }
         KeyCode::Char('k') => {
             let x = app.current_track;
-            if x < app.playlist.len().try_into().unwrap() {
+            if x + 1 < app.playlist.len().try_into().unwrap() {
                 let flag = if app.state == State::NotPlaying || app.state == State::Paused {
                     true
                 } else {
@@ -314,6 +338,7 @@ async fn handle_key(
                         app.playlist[(x + 1) as usize].path.clone(),
                     ))
                     .await;
+                app.last_event = PlayerEvent::SkipForward;
                 if flag {
                     let _ = cmd_tx.send(PlayerCmd::Pause).await;
                 }
